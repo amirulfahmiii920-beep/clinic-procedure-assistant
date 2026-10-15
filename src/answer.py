@@ -10,7 +10,9 @@ Pipeline (every step can end the request early):
   7. Generation       -> the model answers only from numbered evidence, as JSON {answer, cited}.
   8. Evidence check   -> the reply must parse, match the schema and cite only supplied evidence.
   9. Output guard     -> an answer that drifts into dosing or diagnosis is withheld.
- 10. Audit log        -> one event per request, without the question or answer text.
+ 10. Grounding check  -> every time, fee and number must appear in the cited evidence.
+ 11. Review queue     -> unverified or withheld answers are queued for staff review.
+ 12. Audit log        -> one event per request with token usage, without the question or answer text.
 
 Run:  python src/answer.py "What documents do I need to register?"
 """
@@ -24,11 +26,13 @@ from pydantic import BaseModel, ValidationError
 from audit import log_event
 from clinic_hours import asks_if_open_now, check_clinic_open, describe, describe_ms
 from config import CHAT_MODEL
+from grounding import ungrounded_facts
 from guards import check_input, classify_scope, is_medical_advice, output_has_medical_advice
 from language import detect_language, message
-from ollama_client import OllamaUnavailable, chat
+from ollama_client import USAGE, OllamaUnavailable, chat, reset_usage
 from privacy import mask_pii
 from retrieve import retrieve
+from review_queue import add_to_review
 
 SENTINEL = "NOT_IN_SOP"
 
@@ -88,6 +92,7 @@ class Answer(BaseModel):
     guard: str | None = None        # which check decided a refusal or block
     sources: list[Source] = []      # evidence supplied to the model
     cited: list[int] = []           # evidence numbers the answer actually cites
+    ungrounded: list[str] = []      # times, fees or numbers not found in the cited evidence
 
 
 # Pronouns that point back to the previous question. "there" and "this" are left out on
@@ -123,7 +128,7 @@ def to_english(question: str) -> str:
     return Translation.model_validate_json(raw).english.strip()
 
 
-def _answer(question: str, history: list[dict]) -> Answer:
+def _answer(question: str, history: list[dict], temperature: float = 0.0) -> Answer:
     lang = detect_language(question)
 
     reason = check_input(question)
@@ -168,7 +173,7 @@ def _answer(question: str, history: list[dict]) -> Answer:
     messages += [m for m in history[-4:] if m["role"] in ("user", "assistant")]
     messages.append({"role": "user", "content": build_prompt(search_text, sources)})
     try:
-        raw = chat(messages, CHAT_MODEL, temperature=0.0, schema=ModelReply.model_json_schema())
+        raw = chat(messages, CHAT_MODEL, temperature=temperature, schema=ModelReply.model_json_schema())
     except OllamaUnavailable as e:
         # Keep the retrieved evidence visible even though no answer could be written.
         return Answer(status="MODEL_UNAVAILABLE", text=str(e), query=query, sources=sources, **base)
@@ -177,7 +182,7 @@ def _answer(question: str, history: list[dict]) -> Answer:
     try:
         reply = ModelReply.model_validate_json(raw)
     except ValidationError:
-        return Answer(status="UNVERIFIED", text=raw.strip(), query=query, sources=sources, **base)
+        return Answer(status="UNVERIFIED", text=raw.strip(), query=query, sources=sources, guard="schema", **base)
 
     if SENTINEL in reply.answer:
         return Answer(status="NOT_FOUND", text=message("NOT_FOUND", lang), query=query, sources=sources, **base)
@@ -191,17 +196,41 @@ def _answer(question: str, history: list[dict]) -> Answer:
     supplied = {LETTERS[s.n - 1]: s.n for s in sources}
     labels = {c.strip().strip("[]").upper() for c in reply.cited}
     valid = sorted(supplied[c] for c in labels if c in supplied)
-    status = "ANSWERED" if valid and len(valid) == len(labels) else "UNVERIFIED"
     text = (MS_NOTE if lang == "ms" else "") + reply.answer.strip()
-    return Answer(status=status, text=text, query=query, sources=sources, cited=valid, **base)
+    if not valid or len(valid) != len(labels):
+        return Answer(status="UNVERIFIED", text=text, query=query, sources=sources, cited=valid,
+                      guard="citation", **base)
+
+    # Grounding check: every time, fee and number must appear in the cited evidence.
+    cited_text = "\n".join(s.text for s in sources if s.n in valid)
+    missing = ungrounded_facts(reply.answer, cited_text, search_text)
+    guard = None
+    if missing:
+        # Citation repair: the small model sometimes cites a neighbouring section. If the missing
+        # facts are in another section it was given, cite that section too; otherwise flag it.
+        extra = [s.n for s in sources if s.n not in valid
+                 and len(ungrounded_facts(" ".join(missing), s.text)) < len(missing)]
+        repaired = sorted(set(valid) | set(extra))
+        still_missing = ungrounded_facts(
+            reply.answer, "\n".join(s.text for s in sources if s.n in repaired), search_text)
+        if still_missing:
+            return Answer(status="UNVERIFIED", text=text, query=query, sources=sources, cited=valid,
+                          guard="grounding", ungrounded=still_missing, **base)
+        valid, guard = repaired, "citation_repaired"
+    return Answer(status="ANSWERED", text=text, query=query, sources=sources, cited=valid, guard=guard, **base)
 
 
-def answer(question: str, history: list[dict] | None = None) -> Answer:
+def answer(question: str, history: list[dict] | None = None, temperature: float = 0.0) -> Answer:
     start = time.perf_counter()
-    a = _answer((question or "").strip(), history or [])
+    reset_usage()
+    a = _answer((question or "").strip(), history or [], temperature)
+    cited = [f"{s.doc_id}#s{s.section}" for s in a.sources if s.n in a.cited]
+    if a.status in ("UNVERIFIED", "BLOCKED_OUTPUT"):
+        # Low-confidence answers go to staff for review (human in the loop).
+        add_to_review(a.status, a.guard, a.query, a.text, cited)
     log_event(status=a.status, masked_question=a.query, lang=a.lang, pii_types=a.pii_masked,
-              cited=[f"{s.doc_id}#s{s.section}" for s in a.sources if s.n in a.cited],
-              model=CHAT_MODEL, latency_s=time.perf_counter() - start, reason=a.guard)
+              cited=cited, model=CHAT_MODEL, latency_s=time.perf_counter() - start, reason=a.guard,
+              usage=dict(USAGE))
     return a
 
 

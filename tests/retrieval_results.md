@@ -17,4 +17,12 @@ Cutoff (MIN_SCORE): **0.45**, top-k: **3**. An in-SOP question passes when the e
 
 **10 / 10 passed.**
 
+Ranking metrics over the 8 questions the SOPs answer:
+
+| Metric | Value | Meaning |
+|---|---|---|
+| Recall@1 | 1.00 | expected section ranked first |
+| Recall@3 | 1.00 | expected section among the 3 passages given to the model |
+| MRR | 1.00 | mean of 1/rank; 1.00 means always ranked first |
+
 Note: Q09 (medical) is also blocked by a separate scope guard before retrieval, so retrieval does not need to reject it on score alone.

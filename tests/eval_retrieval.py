@@ -30,6 +30,7 @@ def main() -> None:
              "| ID | Type | Top hit | Top score | Expected | Expected rank | Pass |",
              "|---|---|---|---|---|---|---|"]
     passed = 0
+    ranks = []  # rank of the expected section, for questions the SOPs answer
     for r in rows:
         q = r["question"].replace("(after Q01) ", "")
         if r["id"] in PREV:
@@ -43,16 +44,26 @@ def main() -> None:
         else:
             pos = names.index(r["expected_source"])
             rank = str(pos + 1)
+            ranks.append(pos + 1)
             ok = pos < TOP_K and ranked[pos]["score"] >= MIN_SCORE
         passed += ok
         lines.append(f"| {r['id']} | {r['type']} | {hit} | {top['score']:.3f} | {r['expected_source']} "
                      f"| {rank} | {'yes' if ok else 'NO'} |")
         print(f"{r['id']:4} {r['type']:11} {hit:18} {top['score']:.3f}  expected {r['expected_source']:16} rank {rank:2} {'PASS' if ok else 'FAIL'}")
+    recall1 = sum(k == 1 for k in ranks) / len(ranks)
+    recall_k = sum(k <= TOP_K for k in ranks) / len(ranks)
+    mrr = sum(1 / k for k in ranks) / len(ranks)
     lines += ["", f"**{passed} / {len(rows)} passed.**", "",
+              f"Ranking metrics over the {len(ranks)} questions the SOPs answer:", "",
+              "| Metric | Value | Meaning |", "|---|---|---|",
+              f"| Recall@1 | {recall1:.2f} | expected section ranked first |",
+              f"| Recall@{TOP_K} | {recall_k:.2f} | expected section among the {TOP_K} passages given to the model |",
+              f"| MRR | {mrr:.2f} | mean of 1/rank; 1.00 means always ranked first |", "",
               "Note: Q09 (medical) is also blocked by a separate scope guard before retrieval, "
               "so retrieval does not need to reject it on score alone."]
     (ROOT / "tests" / "retrieval_results.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"\n{passed} / {len(rows)} passed -> tests/retrieval_results.md")
+    print(f"\n{passed} / {len(rows)} passed | Recall@1 {recall1:.2f} | Recall@{TOP_K} {recall_k:.2f} | MRR {mrr:.2f}"
+          " -> tests/retrieval_results.md")
 
 
 if __name__ == "__main__":

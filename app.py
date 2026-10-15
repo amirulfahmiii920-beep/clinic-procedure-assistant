@@ -19,7 +19,7 @@ STATUS = {
     "TOOL": ("ok", "Checked against the opening hours (Python clock)"),
     "NOT_FOUND": ("warn", "Not covered by the SOPs"),
     "REFUSED_MEDICAL": ("warn", "Outside scope: medical advice"),
-    "UNVERIFIED": ("bad", "Needs review: the citation check failed"),
+    "UNVERIFIED": ("bad", "Needs review: please confirm at the counter"),
     "MODEL_UNAVAILABLE": ("bad", "Model unavailable"),
     "BLOCKED_INPUT": ("bad", "Blocked: message not accepted"),
     "BLOCKED_OUTPUT": ("bad", "Withheld: the draft contained medical advice"),
@@ -30,7 +30,12 @@ GUARD = {
     "INJECTION": "The message looked like an attempt to override the assistant's instructions.",
     "TOO_LONG": "The message is longer than 500 characters.",
     "EMPTY": "The message was empty.",
+    "PROFANITY": "The message contained abusive language.",
     "output": "The answer was generated but failed the output check, so it was not shown.",
+    "citation": "The answer cited evidence the model was not given. Sent to the staff review queue.",
+    "schema": "The model's reply did not match the required format. Sent to the staff review queue.",
+    "grounding": "A time, fee or number in the answer is not in the cited SOP section. Sent to the staff review queue.",
+    "citation_repaired": "The model cited the wrong section; the citation was corrected to the section that contains the times or numbers in the answer.",
 }
 
 EXAMPLES = [
@@ -74,6 +79,9 @@ def render_panel(a: Answer) -> str:
         parts.append(f'<div class="query">Searched for: “{html.escape(a.query)}”</div>')
     if a.guard in GUARD:
         parts.append(f"<p>{GUARD[a.guard]}</p>")
+    if a.ungrounded:
+        parts.append("<p>Not found in the cited section: <strong>" +
+                     html.escape(", ".join(a.ungrounded)) + "</strong></p>")
     if not a.sources:
         note = {"TOOL": "Answered from SOP-02 opening hours by a Python function, not by the model.",
                 "NOT_FOUND": "No SOP section scored above the relevance cutoff."}.get(a.status, "")

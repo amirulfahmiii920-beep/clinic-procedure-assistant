@@ -1,9 +1,19 @@
-"""Minimal Ollama HTTP client using only the standard library."""
+"""Minimal Ollama HTTP client using only the standard library.
+
+Token counts from every call are added to USAGE so the answer pipeline can log how many
+model calls and tokens one question cost.
+"""
 import json
 import urllib.error
 import urllib.request
 
 from config import OLLAMA_URL, TIMEOUT_S
+
+USAGE = {"calls": 0, "tokens_in": 0, "tokens_out": 0}
+
+
+def reset_usage() -> None:
+    USAGE.update(calls=0, tokens_in=0, tokens_out=0)
 
 
 class OllamaUnavailable(RuntimeError):
@@ -18,11 +28,15 @@ def _post(path: str, payload: dict) -> dict:
     )
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
-            return json.load(r)
+            out = json.load(r)
     except urllib.error.URLError as e:
         raise OllamaUnavailable(
             f"Cannot reach Ollama at {OLLAMA_URL}. Start Ollama and try again. ({e})"
         ) from e
+    USAGE["calls"] += 1
+    USAGE["tokens_in"] += out.get("prompt_eval_count", 0)
+    USAGE["tokens_out"] += out.get("eval_count", 0)
+    return out
 
 
 def embed(texts: list[str], model: str) -> list[list[float]]:

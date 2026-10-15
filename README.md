@@ -39,14 +39,27 @@ patients how long they will wait, this one tells them what to do.
 
 | Layer | What it stops | Where |
 |---|---|---|
-| Input check | Empty or over-long messages, and prompt-injection attempts such as "ignore your instructions" (English and Malay) | `guards.py` |
+| Input check | Empty or over-long messages, prompt-injection attempts such as "ignore your instructions", and abusive language (English and Malay) | `guards.py` |
 | PII masking | MyKad, phone, e-mail and passport numbers are replaced with `[IC]`, `[PHONE]`... before search, the model or the log see them | `privacy.py` |
 | Keyword scope guard | Obvious medical-advice questions (medicines, doses, diagnosis), refused with no model call | `guards.py` |
 | Model scope guard | Medical questions with no keyword ("What can I take for my headache?"), caught by a small few-shot classification call | `guards.py` |
 | Grounding | The model may only use the supplied SOP evidence; instructions inside documents are treated as data | `answer.py` |
 | Structured output + evidence check | The reply must be JSON matching a Pydantic schema and may only cite evidence it was given; otherwise *Needs review* | `answer.py` |
 | Output guard | An answer that drifts into dosing or diagnosis ("take 500 mg", "it sounds like you have") is withheld | `guards.py` |
-| Audit log | One JSON line per request: status, guard that fired, sources, latency. No question or answer text, no identifiers; only a short hash of the masked question | `audit.py` |
+| Grounding check | Every time, RM amount and number in the answer must appear in the cited SOP section. If it is in another retrieved section, the citation is repaired; if it is nowhere, the answer is flagged | `grounding.py` |
+| Staff review queue | Flagged or withheld answers are queued with the masked question for a person to check (human in the loop) | `review_queue.py` |
+| Audit log | One JSON line per request: status, guard that fired, sources, latency, model calls and tokens. No question or answer text, no identifiers; only a short hash of the masked question | `audit.py` |
+
+See also the [model card](MODEL_CARD.md) for intended use, evaluation and risks.
+
+| | |
+|---|---|
+| ![IC number masked](docs/screenshots/ui_pii_masked.png) | ![Prompt injection blocked](docs/screenshots/ui_injection_blocked.png) |
+| The IC number is masked before search; the search text has no identifier | A prompt-injection attempt is blocked before any model call |
+| ![Model-based medical check](docs/screenshots/ui_model_guard.png) | ![Malay question](docs/screenshots/ui_malay.png) |
+| "What can I take for my headache?" has no medical keyword; the model check refuses it | A Malay question is detected, searched in English and answered with a Malay note |
+| ![Safety unit tests](docs/screenshots/safety_tests.png) | ![Audit log](docs/screenshots/audit_log.png) |
+| Safety unit tests | Audit log: decisions and sources, no question text or IC numbers |
 
 ## How it works
 
@@ -69,7 +82,12 @@ flowchart LR
     V -- no --> U[Needs review]
     V -- yes --> O{Medical advice<br/>in the answer?}
     O -- yes --> W[Withheld]
-    O -- no --> OK[Answer + sources]
+    O -- no --> GR{Times, fees, numbers<br/>in cited section?}
+    GR -- "in another retrieved section" --> RP[Repair citation] --> OK[Answer + sources]
+    GR -- yes --> OK
+    GR -- nowhere --> U
+    U --> RQ[(Staff review queue)]
+    W --> RQ
 ```
 
 Every path ends with one audit-log event.
@@ -97,16 +115,40 @@ Malay questions.
 
 | Check | Result |
 |---|---|
-| Safety unit tests: masking, input check, keyword and output guards, language detection (no model) | **8 / 8** ([tests](tests/test_safety.py)) |
-| Retrieval on the original 10 questions: expected section in the top 3, nothing above the cutoff for out-of-scope ones | **10 / 10** ([details](tests/retrieval_results.md)) |
-| Full assistant, automatic check (status, language, masking, expected section cited) | **17 / 20** ([details](tests/answer_results_qwen2.5-3b.md)) |
-| Full assistant, read by hand against the SOPs | **15 correct, 2 correct with a wrong citation, 3 incomplete, 0 wrong** ([review](tests/manual_review.md)) |
+| Safety unit tests: masking, input check, word filter, guards, grounding, language detection (no model) | **10 / 10** ([tests](tests/test_safety.py)) |
+| Retrieval on the original 10 questions | **10 / 10**; Recall@1 1.00, Recall@3 1.00, MRR 1.00 ([details](tests/retrieval_results.md)) |
+| Full assistant, automatic check (status, language, masking, expected section cited) | **19 / 20** ([details](tests/answer_results_qwen2.5-3b.md)) |
+| Full assistant, read by hand against the SOPs | **15 correct, 2 correct after citation repair, 3 incomplete, 0 wrong** ([review](tests/manual_review.md)) |
+| Semantic robustness: 3 topics, each asked 5 ways | **14 / 15** consistent ([details](tests/robustness_results.md)) |
+| Temperature 0.0 / 0.7 / 1.2 (3 questions x 3 runs) | identical runs **3/3**, 0/3, 0/3; correct 9/9 at each ([details](tests/temperature_results.md)) |
 
 All six safety cases behaved as intended: the IC number never reached search, the model or the
 log; the injection attempt was blocked before any model call; two medical questions with no
 medical keyword were caught by the model guard; and Malay medical and out-of-scope questions got
-Malay replies. The three automatic failures are answers with correct content where the model
-cited a neighbouring section or left out a step.
+Malay replies. Two answers cited the wrong section; the grounding check caught both and the
+citation was repaired from the retrieved section that contains the times. The remaining
+automatic failure (Q04) is an incomplete answer.
+
+Temperature 0 is the default: higher settings kept the facts on these questions but changed the
+wording on every run, and a clinic assistant should give the same answer to the same question.
+
+## AWS equivalents
+
+The project runs locally and free, but each part maps to a managed AWS service covered in the
+AWS Academy Generative AI Foundations course:
+
+| This project | AWS equivalent |
+|---|---|
+| Ollama running `qwen2.5:3b` | Amazon Bedrock (foundation models through one API) |
+| `ingest.py` + `retrieve.py` + SQLite vectors | Amazon Bedrock Knowledge Bases (managed RAG, chunking, embeddings, vector store) |
+| `guards.py`: keyword topics, injection and word filters, PII masking | Amazon Bedrock Guardrails (denied topics, prompt-attack filter, word filters, sensitive-information filters) |
+| `grounding.py` | Bedrock Guardrails contextual grounding check |
+| `review_queue.py` | Amazon Augmented AI (A2I) human review workflows |
+| `audit.py` with token counts | Amazon CloudWatch logs and metrics, AWS CloudTrail for API activity |
+| `MODEL_CARD.md` | Amazon SageMaker Model Cards |
+| `tests/eval_*.py` and the manual review | Amazon Bedrock model evaluation (automatic and human) |
+| `clinic_hours.py` tool | A tool / action group called by Amazon Bedrock Agents |
+| Running locally so data stays on the machine | Bedrock does not use prompts to train models; data encrypted with AWS KMS; access controlled with IAM |
 
 ### Choosing the model
 
@@ -156,6 +198,8 @@ Run the tests:
 python tests/test_safety.py                        # deterministic safety checks, no model needed
 python tests/eval_retrieval.py
 python tests/eval_answers.py                       # uses qwen2.5:3b
+python tests/eval_robustness.py                    # same question asked five ways
+python tests/eval_temperature.py                   # temperature 0.0 / 0.7 / 1.2
 CHAT_MODEL=qwen2.5:1.5b python tests/eval_answers.py   # compare another model (bash syntax)
 ```
 
@@ -171,8 +215,11 @@ src/privacy.py         masks MyKad, phone, e-mail and passport numbers
 src/guards.py          input check, keyword and model scope guards, output guard
 src/language.py        Malay/English detection and fixed replies in both languages
 src/clinic_hours.py    deterministic "open now?" tool (Malaysia time, UTC+8)
-src/audit.py           audit log without question or answer text
+src/grounding.py       times, fees and numbers must appear in the cited evidence
+src/review_queue.py    staff review queue for flagged or withheld answers
+src/audit.py           audit log with token counts, without question or answer text
 src/answer.py          the pipeline from input check to audit log
+MODEL_CARD.md          intended use, evaluation, limitations and risks
 app.py                 Gradio interface
 tests/                 questions, safety unit tests, evaluation scripts, results, manual review
 logs/                  audit.jsonl (created at run time, not committed)
@@ -184,20 +231,27 @@ logs/                  audit.jsonl (created at run time, not committed)
   questions; the relevance cutoff sits close to some scores (a supported question scored
   0.457 and an unsupported one 0.399 against a 0.45 cutoff), so more test questions are
   needed before trusting it on a larger corpus.
-- **Citations are the weakest part.** Answers on the test set are factually right, but the
-  model sometimes cites a neighbouring section, and one answer still mentions a rule number.
+- **Citations are the weakest part.** The model sometimes cites a neighbouring section. The
+  grounding check repairs this only when the answer contains a time, fee or number to match;
+  a wrong citation for a sentence without numbers is not detected. One answer still mentions a
+  rule number.
+- **The grounding check is narrow.** It checks times, RM amounts and whole numbers only. It
+  skips decimals (they look like section numbers), so a calculated figure such as "a 2.5-hour
+  break" is not checked, and it cannot tell whether a sentence without numbers is supported.
 - **Malay answers are in English.** Asked to write Malay, `qwen2.5:3b` used wrong terms and a
   wrong time, so generated answers stay in English with a Malay note. A larger model or a
   Malay version of the SOPs would be needed for full Malay answers.
 - PII masking covers MyKad, phone, e-mail and passport numbers only. **Names and addresses are
   not detected**; pattern masking alone does not make text anonymous.
-- The keyword guards and the injection check catch common phrasings, not every phrasing. The
-  model-based scope check fails open (treated as a procedure question) if Ollama is down, so the
-  other layers still apply.
-- The model scope check adds one short model call to each question.
+- The keyword guards, the word filter and the injection check catch common phrasings, not every
+  phrasing. The model-based scope check fails open (treated as a procedure question) if Ollama is
+  down, so the other layers still apply.
+- Each answered question costs 3 to 4 model calls (scope check, embedding, answer, plus
+  translation for Malay) and 570 to 790 input tokens in the test runs, logged per request.
 - The opening-hours tool does not know about public holidays and says so in its answer.
-- Answers can be incomplete (one left out the two-change limit for appointments). Patients
-  should confirm important details at the counter.
+- Answers can be incomplete (3 of 20 test answers left out a step or item). Patients should
+  confirm important details at the counter.
+- The review queue is a file, not a review screen; a real deployment would need a staff UI.
 
 ## Built with
 

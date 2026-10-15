@@ -1,5 +1,37 @@
 # Manual review
 
+## Round 3: grounding check, citation repair and evaluation metrics (qwen2.5:3b)
+
+Added a grounding check (times, RM amounts and numbers in an answer must appear in the cited
+section), automatic citation repair, a staff review queue, token logging, a word filter,
+retrieval ranking metrics, a robustness test and a temperature experiment.
+
+| Test | Result |
+|---|---|
+| Safety unit tests | 10 / 10 |
+| Retrieval (10 questions) | 10 / 10; Recall@1 1.00, Recall@3 1.00, MRR 1.00 (the clearer SOP-02 wording moved the Friday section from rank 3 to rank 1) |
+| Full assistant (20 questions) | 19 / 20 automatic |
+| Semantic robustness (15 phrasings) | 14 / 15; the miss ("My father is 70...") is a correct answer that does not mention the age-60 threshold the test requires |
+| Temperature 0.0 / 0.7 / 1.2 | identical runs 3/3, 0/3, 0/3; correct 9/9 at every setting |
+
+**By hand (20 questions): 15 correct and complete, 2 correct after citation repair (Q02, Q17),
+3 incomplete (Q04, Q05, Q11), 0 factually wrong.**
+
+### Findings
+- **The grounding check caught the citation errors.** Q02 and Q17 cited SOP-02 §5 for times that
+  only appear in §2. Before repair they were flagged as *Needs review* and queued for staff; with
+  repair, the citation now points to the section that contains the times.
+- **A bug in my own check.** "My father is 70." was flagged because the number regex ignored a
+  number followed by a full stop. Fixed, with a unit test.
+- **Temperature.** Higher temperatures changed the wording on every run but kept the facts for
+  these three simple questions. Temperature 0 stays the default because a clinic assistant
+  should give the same answer to the same question.
+- **A blind spot.** At temperature 0.7 the model wrote "a 2.5-hour break", a figure it
+  calculated. The grounding check skips decimals because they look like section numbers, so it
+  was not flagged. The fact happens to be right, but a wrong calculation would also pass.
+
+---
+
 ## Round 2: safety layers and Malay (qwen2.5:3b, 20 questions)
 
 After adding PII masking, an input check, a model-based scope guard, an output guard, an

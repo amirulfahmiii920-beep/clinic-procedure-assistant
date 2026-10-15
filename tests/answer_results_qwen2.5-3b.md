@@ -1,6 +1,6 @@
 # Answer results
 
-Model: **qwen2.5:3b**. **17 / 20 passed the automatic check.**
+Model: **qwen2.5:3b**. **19 / 20 passed the automatic check.**
 Automatic check per question. Each answer was also read by hand against the SOP.
 
 ## Q01 (in_sop): PASS
@@ -11,12 +11,12 @@ Automatic check per question. Each answer was also read by hand against the SOP.
 **Cited:** SOP-01 Section 2  
 **Answer:** You need to bring your MyKad (identity card) as a Malaysian adult, or your MyKid or birth certificate along with your parent's MyKad for children under 12. Patients with an appointment must also bring their appointment card or appointment SMS. Non-citizens must bring their passport or valid work permit. Patients on long-term medication should bring their medication record book.
 
-## Q02 (in_sop): FAIL
+## Q02 (in_sop): PASS
 
 **Question:** What time does the clinic close on Friday?  
 **Expected:** 5:00 pm; also mentions the 12:15 pm to 2:45 pm Friday break (SOP-02 Section 2)  
-**Status:** ANSWERED · language en  
-**Cited:** SOP-02 Section 5  
+**Status:** ANSWERED · language en guard=citation_repaired  
+**Cited:** SOP-02 Section 2, SOP-02 Section 5  
 **Answer:** The clinic closes at 5:00 pm on Friday, with a break from 12:15 pm to 2:45 pm.
 
 ## Q03 (in_sop): PASS
@@ -133,12 +133,12 @@ Automatic check per question. Each answer was also read by hand against the SOP.
 
 To register, patients must bring their MyKad (identity card) if they are Malaysian adults, their MyKid or birth certificate along with their MyKad if they are under 12, their appointment card or appointment SMS if they have one, and their passport or valid work permit if they are non-citizens. Patients on long-term medication should also bring their medication record book.
 
-## Q17 (in_sop_ms): FAIL
+## Q17 (in_sop_ms): PASS
 
 **Question:** Klinik tutup pukul berapa hari Jumaat?  
 **Expected:** Answer in Malay: 5:00 pm (SOP-02 Section 2)  
-**Status:** ANSWERED · language ms  
-**Cited:** SOP-02 Section 5  
+**Status:** ANSWERED · language ms guard=citation_repaired  
+**Cited:** SOP-02 Section 2, SOP-02 Section 5  
 **Answer:** Jawapan di bawah dalam Bahasa Inggeris kerana SOP klinik ditulis dalam Bahasa Inggeris dan terjemahan automatik belum cukup tepat. Sila tanya di kaunter jika kurang jelas.
 
 The clinic closes at 5:00 pm on Friday, with a Friday prayer break from 12:15 pm to 2:45 pm.

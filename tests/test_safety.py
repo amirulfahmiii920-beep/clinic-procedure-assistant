@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from grounding import ungrounded_facts  # noqa: E402
 from guards import check_input, is_medical_advice, output_has_medical_advice  # noqa: E402
 from language import detect_language  # noqa: E402
 from privacy import mask_pii  # noqa: E402
@@ -55,6 +56,25 @@ def test_output_guard():
     assert output_has_medical_advice("It sounds like you have the flu.")
     assert not output_has_medical_advice("Take a number from the kiosk and wait to be called.")
     assert not output_has_medical_advice("Bring your medication record book.")
+
+
+def test_profanity_filter():
+    assert check_input("this stupid bot is useless") == "PROFANITY"
+    assert check_input("klinik bodoh") == "PROFANITY"
+    assert check_input("Is the clinic open on Saturday?") is None
+
+
+def test_grounding_check():
+    ev = "Friday: the clinic opens at 8:00 am and closes at 5:00 pm. Non-citizens pay RM40.00 per visit."
+    assert ungrounded_facts("The clinic closes at 5:00 pm on Friday.", ev) == []
+    assert ungrounded_facts("Non-citizens pay RM40.00.", ev) == []
+    assert ungrounded_facts("The clinic closes at 12:15 pm on Friday.", ev) == ["12:15pm"]
+    assert ungrounded_facts("Non-citizens pay RM50.00.", ev) == ["RM50.00"]
+    assert ungrounded_facts("You may change it 3 times.", "An appointment may be changed two times.") == ["3"]
+    # Section and rule references are not facts
+    assert ungrounded_facts("As stated in rule 2.1 and Section 3.", ev) == []
+    # A number the patient gave in the question is grounded, even at the end of a sentence
+    assert ungrounded_facts("Your father is 70, so he pays no fee.", ev, "My father is 70. Does he pay?") == []
 
 
 def test_language_detection():

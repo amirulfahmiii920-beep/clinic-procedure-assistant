@@ -14,7 +14,9 @@ LOG_PATH = ROOT / "logs" / "audit.jsonl"
 
 
 def log_event(status: str, masked_question: str, lang: str, pii_types: list[str],
-              cited: list[str], model: str, latency_s: float, reason: str | None = None) -> None:
+              cited: list[str], model: str, latency_s: float, reason: str | None = None,
+              usage: dict | None = None) -> None:
+    usage = usage or {}
     event = {
         "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "status": status,
@@ -26,6 +28,11 @@ def log_event(status: str, masked_question: str, lang: str, pii_types: list[str]
         "cited": cited,
         "model": model,
         "latency_s": round(latency_s, 2),
+        # Model calls and tokens (embedding + chat). Local inference is free, but on a hosted
+        # API these numbers are what the cost would be based on.
+        "model_calls": usage.get("calls", 0),
+        "tokens_in": usage.get("tokens_in", 0),
+        "tokens_out": usage.get("tokens_out", 0),
     }
     try:
         LOG_PATH.parent.mkdir(exist_ok=True)

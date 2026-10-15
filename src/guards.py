@@ -26,6 +26,13 @@ INJECTION = re.compile(
     re.I)
 
 
+# Word filter for abusive messages (English and Malay). Kept short on purpose: it covers
+# common insults, not every spelling, and is listed as a limitation in the README.
+PROFANITY = re.compile(
+    r"\b(fuck\w*|shit\w*|bitch\w*|bastard\w*|asshole\w*|idiot|stupid bot|"
+    r"bodoh|babi|sial|celaka|bangang|bengap|puki\w*|pantat)\b", re.I)
+
+
 def check_input(question: str) -> str | None:
     """Return a reason code if the question must be blocked, else None."""
     if not question.strip():
@@ -34,6 +41,8 @@ def check_input(question: str) -> str | None:
         return "TOO_LONG"
     if INJECTION.search(question):
         return "INJECTION"
+    if PROFANITY.search(question):
+        return "PROFANITY"
     return None
 
 
