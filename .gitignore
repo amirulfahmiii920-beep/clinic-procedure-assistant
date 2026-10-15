@@ -6,3 +6,7 @@ data/index.sqlite
 
 # Local tool settings
 .claude/
+
+# Never commit course or study material
+*.pdf
+study-materials/
