@@ -92,6 +92,12 @@ flowchart LR
 
 Every path ends with one audit-log event.
 
+![Architecture diagram](docs/screenshots/arch_diagram.png)
+
+![Citation repaired by the grounding check](docs/screenshots/ui_citation_repaired.png)
+*The model cited SOP-02 §5 for times that only appear in §2. The grounding check noticed and
+corrected the citation to the section that contains them.*
+
 1. **Indexing.** Each SOP section (`## 2. Documents to bring`) becomes one chunk. Sections are
    short and self-contained, so every rule stays whole and every answer can cite an exact
    section. Chunks are embedded with `embeddinggemma` (using its query/document task prefixes)
