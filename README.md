@@ -52,6 +52,10 @@ patients how long they will wait, this one tells them what to do.
 
 See also the [model card](MODEL_CARD.md) for intended use, evaluation and risks.
 
+![Staff review queue](docs/screenshots/review_queue.png)
+
+![Cost per question](docs/screenshots/cost_per_question.png)
+
 | | |
 |---|---|
 | ![IC number masked](docs/screenshots/ui_pii_masked.png) | ![Prompt injection blocked](docs/screenshots/ui_injection_blocked.png) |
