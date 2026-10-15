@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+# Built locally by src/ingest.py
+data/index.sqlite
+
+# Local tool settings
+.claude/
