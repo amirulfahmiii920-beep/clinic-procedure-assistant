@@ -20,7 +20,8 @@ PREV = {"Q10": "Q01"}  # follow-up questions are searched together with the earl
 
 
 def main() -> None:
-    rows = list(csv.DictReader(open(ROOT / "tests" / "questions.csv", encoding="utf-8")))
+    # Retrieval is evaluated on the original ten questions; the later ones test the safety layers.
+    rows = list(csv.DictReader(open(ROOT / "tests" / "questions.csv", encoding="utf-8")))[:10]
     by_id = {r["id"]: r for r in rows}
     lines = ["# Retrieval results", "",
              f"Cutoff (MIN_SCORE): **{MIN_SCORE}**, top-k: **{TOP_K}**. An in-SOP question passes when the "

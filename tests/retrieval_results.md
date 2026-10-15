@@ -5,7 +5,7 @@ Cutoff (MIN_SCORE): **0.45**, top-k: **3**. An in-SOP question passes when the e
 | ID | Type | Top hit | Top score | Expected | Expected rank | Pass |
 |---|---|---|---|---|---|---|
 | Q01 | in_sop | SOP-01 Section 2 | 0.585 | SOP-01 Section 2 | 1 | yes |
-| Q02 | in_sop | SOP-02 Section 5 | 0.612 | SOP-02 Section 2 | 3 | yes |
+| Q02 | in_sop | SOP-02 Section 2 | 0.658 | SOP-02 Section 2 | 1 | yes |
 | Q03 | in_sop | SOP-04 Section 3 | 0.552 | SOP-04 Section 3 | 1 | yes |
 | Q04 | in_sop | SOP-03 Section 3 | 0.457 | SOP-03 Section 3 | 1 | yes |
 | Q05 | in_sop | SOP-05 Section 2 | 0.701 | SOP-05 Section 2 | 1 | yes |

@@ -10,3 +10,6 @@ data/index.sqlite
 # Never commit course or study material
 *.pdf
 study-materials/
+
+# Audit log written by the app (local only)
+logs/

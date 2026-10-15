@@ -30,11 +30,23 @@ patients how long they will wait, this one tells them what to do.
 |---|---|
 | Answers with citations | Retrieves the most relevant SOP sections and the model must cite them, e.g. *SOP-01 §2* |
 | Says "not covered" | If no section scores above a relevance cutoff, or the model reports the evidence does not answer, it says so instead of guessing |
-| Refuses medical advice | A scope guard blocks questions about medicines, doses, diagnosis or treatment before any model call |
 | Understands follow-ups | "What if I forgot it?" is searched together with the previous question |
 | Checks opening hours in code | "Is the clinic open now?" is answered by a Python function from the SOP-02 timetable, not by the model |
-| Flags unsupported answers | A citation check marks any answer that cites evidence it was not given as *Needs review* |
+| Understands Malay questions | Malay is detected, translated to English for search, and fixed replies are in Malay (see [Limitations](#limitations)) |
 | Runs locally | Ollama with `qwen2.5:3b` for answers and `embeddinggemma` for search |
+
+### Safety layers
+
+| Layer | What it stops | Where |
+|---|---|---|
+| Input check | Empty or over-long messages, and prompt-injection attempts such as "ignore your instructions" (English and Malay) | `guards.py` |
+| PII masking | MyKad, phone, e-mail and passport numbers are replaced with `[IC]`, `[PHONE]`... before search, the model or the log see them | `privacy.py` |
+| Keyword scope guard | Obvious medical-advice questions (medicines, doses, diagnosis), refused with no model call | `guards.py` |
+| Model scope guard | Medical questions with no keyword ("What can I take for my headache?"), caught by a small few-shot classification call | `guards.py` |
+| Grounding | The model may only use the supplied SOP evidence; instructions inside documents are treated as data | `answer.py` |
+| Structured output + evidence check | The reply must be JSON matching a Pydantic schema and may only cite evidence it was given; otherwise *Needs review* | `answer.py` |
+| Output guard | An answer that drifts into dosing or diagnosis ("take 500 mg", "it sounds like you have") is withheld | `guards.py` |
+| Audit log | One JSON line per request: status, guard that fired, sources, latency. No question or answer text, no identifiers; only a short hash of the masked question | `audit.py` |
 
 ## How it works
 
@@ -43,44 +55,58 @@ flowchart LR
     subgraph Indexing["Indexing (once)"]
         A[5 SOP files] --> B[Split by section] --> C[embeddinggemma] --> D[(SQLite<br/>vectors + metadata)]
     end
-    Q[Patient question] --> G{Medical<br/>advice?}
+    Q[Patient question] --> I{Input check<br/>length, injection}
+    I -- blocked --> X[Blocked]
+    I -- ok --> P[Mask IC, phone,<br/>e-mail, passport]
+    P --> G{Medical?<br/>keywords, then model}
     G -- yes --> R1[Refuse, point to doctor]
     G -- no --> H{"Open now?"}
-    H -- yes --> T[Python clock tool<br/>SOP-02 timetable]
-    H -- no --> S[Embed question,<br/>cosine search top 3] --> K{Score above<br/>cutoff?}
+    H -- yes --> T[Python clock tool]
+    H -- no --> M[Malay? translate<br/>to English] --> S[Embed, cosine<br/>search top 3] --> K{Score above<br/>cutoff?}
     D -.-> S
-    K -- no --> N[Not covered by the SOPs]
-    K -- yes --> L[qwen2.5:3b<br/>JSON: answer + cited] --> V{Citations point to<br/>supplied evidence?}
-    V -- yes --> OK[Answer + sources]
+    K -- no --> N[Not covered]
+    K -- yes --> L[qwen2.5:3b<br/>JSON answer + cited] --> V{Valid citations?}
     V -- no --> U[Needs review]
+    V -- yes --> O{Medical advice<br/>in the answer?}
+    O -- yes --> W[Withheld]
+    O -- no --> OK[Answer + sources]
 ```
+
+Every path ends with one audit-log event.
 
 1. **Indexing.** Each SOP section (`## 2. Documents to bring`) becomes one chunk. Sections are
    short and self-contained, so every rule stays whole and every answer can cite an exact
    section. Chunks are embedded with `embeddinggemma` (using its query/document task prefixes)
    and stored in SQLite with the document name, section, title and version.
 2. **Retrieval.** The question is embedded with the same model and compared by cosine
-   similarity against every section. The top 3 above `MIN_SCORE = 0.45` become numbered evidence.
+   similarity against every section. The top 3 above `MIN_SCORE = 0.45` become evidence,
+   labelled [A], [B], [C]. (Numbered labels made the model confuse evidence numbers with
+   section numbers.)
 3. **Generation.** `qwen2.5:3b` (temperature 0) must reply as JSON matching a Pydantic schema:
-   `{"answer": str, "cited": [int]}`, or the sentinel `NOT_IN_SOP`.
+   `{"answer": str, "cited": [str]}`, or the sentinel `NOT_IN_SOP`.
 4. **Validation.** Three layers: the reply must parse, match the schema, and every cited
-   number must refer to evidence that was actually supplied. Otherwise the answer is shown as
-   *Needs review*, not as a verified answer.
+   label must refer to evidence that was actually supplied. Otherwise the answer is shown as
+   *Needs review*, not as a verified answer. Then the output guard checks for medical advice.
 
 ## Results
 
-Ten test questions in [`tests/questions.csv`](tests/questions.csv): five answered by the SOPs,
-two paraphrases, one follow-up, one topic the SOPs do not cover and one medical question.
+Twenty test questions in [`tests/questions.csv`](tests/questions.csv): procedure questions,
+paraphrases, a follow-up, out-of-scope and medical questions, an IC number in the question, a
+prompt-injection attempt, medical questions without keywords, an emergency procedure, and four
+Malay questions.
 
 | Check | Result |
 |---|---|
-| Retrieval: expected section in the top 3 (or nothing above the cutoff for out-of-scope questions) | **10 / 10** ([details](tests/retrieval_results.md)) |
-| Full assistant, automatic check (status + expected section cited) | **9 / 10** ([details](tests/answer_results_qwen2.5-3b.md)) |
-| Full assistant, read by hand against the SOPs | **8 / 10 fully correct, 0 wrong** ([review](tests/manual_review.md)) |
+| Safety unit tests: masking, input check, keyword and output guards, language detection (no model) | **8 / 8** ([tests](tests/test_safety.py)) |
+| Retrieval on the original 10 questions: expected section in the top 3, nothing above the cutoff for out-of-scope ones | **10 / 10** ([details](tests/retrieval_results.md)) |
+| Full assistant, automatic check (status, language, masking, expected section cited) | **17 / 20** ([details](tests/answer_results_qwen2.5-3b.md)) |
+| Full assistant, read by hand against the SOPs | **15 correct, 2 correct with a wrong citation, 3 incomplete, 0 wrong** ([review](tests/manual_review.md)) |
 
-The one automatic failure (Q03) is the citation check doing its job: the model added a
-sentence that is not in the SOP and cited evidence it had not been given, so the answer was
-flagged instead of shown as verified.
+All six safety cases behaved as intended: the IC number never reached search, the model or the
+log; the injection attempt was blocked before any model call; two medical questions with no
+medical keyword were caught by the model guard; and Malay medical and out-of-scope questions got
+Malay replies. The three automatic failures are answers with correct content where the model
+cited a neighbouring section or left out a step.
 
 ### Choosing the model
 
@@ -127,6 +153,7 @@ python app.py                     # open http://127.0.0.1:7860
 Run the tests:
 
 ```bash
+python tests/test_safety.py                        # deterministic safety checks, no model needed
 python tests/eval_retrieval.py
 python tests/eval_answers.py                       # uses qwen2.5:3b
 CHAT_MODEL=qwen2.5:1.5b python tests/eval_answers.py   # compare another model (bash syntax)
@@ -140,11 +167,15 @@ src/config.py          models, top-k, relevance cutoff
 src/ollama_client.py   minimal Ollama HTTP client (standard library only)
 src/ingest.py          split SOPs by section, embed, store in SQLite
 src/retrieve.py        cosine search with cutoff; refuses an index built with another model
-src/guards.py          medical-advice scope guard
+src/privacy.py         masks MyKad, phone, e-mail and passport numbers
+src/guards.py          input check, keyword and model scope guards, output guard
+src/language.py        Malay/English detection and fixed replies in both languages
 src/clinic_hours.py    deterministic "open now?" tool (Malaysia time, UTC+8)
-src/answer.py          the pipeline: guard -> tool -> retrieve -> generate -> validate
+src/audit.py           audit log without question or answer text
+src/answer.py          the pipeline from input check to audit log
 app.py                 Gradio interface
-tests/                 questions, evaluation scripts, results, manual review
+tests/                 questions, safety unit tests, evaluation scripts, results, manual review
+logs/                  audit.jsonl (created at run time, not committed)
 ```
 
 ## Limitations
@@ -153,12 +184,20 @@ tests/                 questions, evaluation scripts, results, manual review
   questions; the relevance cutoff sits close to some scores (a supported question scored
   0.457 and an unsupported one 0.399 against a 0.45 cutoff), so more test questions are
   needed before trusting it on a larger corpus.
-- English only. Malaysian patients would also ask in Bahasa Melayu; small local models are
-  weaker there and this has not been tested.
-- The medical-advice guard is keyword based. It catches the obvious cases, not every phrasing.
+- **Citations are the weakest part.** Answers on the test set are factually right, but the
+  model sometimes cites a neighbouring section, and one answer still mentions a rule number.
+- **Malay answers are in English.** Asked to write Malay, `qwen2.5:3b` used wrong terms and a
+  wrong time, so generated answers stay in English with a Malay note. A larger model or a
+  Malay version of the SOPs would be needed for full Malay answers.
+- PII masking covers MyKad, phone, e-mail and passport numbers only. **Names and addresses are
+  not detected**; pattern masking alone does not make text anonymous.
+- The keyword guards and the injection check catch common phrasings, not every phrasing. The
+  model-based scope check fails open (treated as a procedure question) if Ollama is down, so the
+  other layers still apply.
+- The model scope check adds one short model call to each question.
 - The opening-hours tool does not know about public holidays and says so in its answer.
-- Even with citations, answers can be incomplete (one test answer left out the medication
-  record book). Patients should confirm important details at the counter.
+- Answers can be incomplete (one left out the two-change limit for appointments). Patients
+  should confirm important details at the counter.
 
 ## Built with
 

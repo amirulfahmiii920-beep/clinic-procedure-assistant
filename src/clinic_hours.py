@@ -20,7 +20,8 @@ SESSIONS = {
 REGISTRATION_CUTOFF = time(16, 30)  # SOP-01 Section 5 / SOP-02 Section 5
 
 OPEN_NOW = re.compile(r"\b(open|closed?)\b.*\b(now|right now|today|at the moment|currently)\b"
-                      r"|\b(now|currently)\b.*\b(open|closed?)\b", re.I)
+                      r"|\b(now|currently)\b.*\b(open|closed?)\b"
+                      r"|\b(buka|tutup)\b.*\b(sekarang|hari ini|tak)\b|\bsekarang\b.*\b(buka|tutup)\b", re.I)
 
 
 def asks_if_open_now(question: str) -> bool:
@@ -69,3 +70,25 @@ def describe(result: dict) -> str:
         msg = (f"No, the clinic has closed for today ({result['checked_at']}). "
                "For emergencies, go to the Emergency Department of Hospital Daerah Mawar.")
     return msg + " This check does not know about public holidays, when the clinic is also closed."
+
+
+def describe_ms(result: dict) -> str:
+    state = result["state"]
+    hours = " dan ".join(result["sessions_today"])
+    when = result["checked_at"]
+    if state == "OPEN":
+        msg = f"Ya, klinik dibuka sekarang ({when}). Waktu hari ini: {hours}."
+        if not result["registration_open"]:
+            msg += " Pendaftaran untuk hari ini sudah ditutup (ditutup pada 4:30 petang)."
+    elif state == "CLOSED_WEEKEND":
+        msg = (f"Tidak. Klinik ditutup pada hujung minggu ({when}). "
+               "Untuk rawatan segera, pergi ke Jabatan Kecemasan Hospital Daerah Mawar.")
+    elif state == "NOT_YET_OPEN":
+        msg = f"Belum dibuka. Sekarang {when}. Waktu hari ini: {hours}."
+    elif state == "BREAK":
+        msg = (f"Klinik sedang berehat sekarang ({when}). Waktu hari ini: {hours}. "
+               "Pesakit yang sudah mendaftar masih dirawat semasa rehat.")
+    else:
+        msg = (f"Tidak, klinik sudah ditutup untuk hari ini ({when}). "
+               "Untuk kecemasan, pergi ke Jabatan Kecemasan Hospital Daerah Mawar.")
+    return msg + " Semakan ini tidak mengambil kira cuti umum, apabila klinik juga ditutup."
